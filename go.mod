@@ -1,5 +1,7 @@
 go 1.25
 
+retract v0.0.3
+
 module github.com/aeternitas-infinita/rmlog
 
 require (
