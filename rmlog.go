@@ -31,7 +31,7 @@ func InitLog(cfg LoggerConfig) {
 }
 
 func InitLogMin(cfg LoggerConfig) {
-	Log = CreateLogger(cfg)
+	LogMin = CreateLogger(cfg)
 }
 
 type LoggerConfig struct {
