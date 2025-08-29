@@ -81,7 +81,7 @@ func RecoverMiddleware(c *fiber.Ctx) error {
 
 			handler.Log.ErrorContext(c.Context(), "Panic recovered", logFields...)
 
-			if eventID != nil {
+			if eventID != nil && hub != nil {
 				hub.Flush(10 * time.Second)
 			}
 
@@ -193,21 +193,80 @@ func CaptureErrorMiddleware() fiber.Handler {
 				hub.WithScope(func(scope *sentry.Scope) {
 					scope.AddEventProcessor(func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
 						if event != nil {
-							event.Message = fmt.Sprintf("Error captured in middleware: %v", err)
+							event.Message = "Error captured in middleware"
 						}
 						return event
 					})
+					scope.SetLevel(sentry.LevelError)
 
-					scope.SetTag("error_type", "middleware_error")
-					scope.SetExtra("status_code", c.Response().StatusCode())
+					scope.SetTag("error_handler", "middleware")
+					scope.SetTag("status_code", fmt.Sprintf("%d", c.Response().StatusCode()))
+					scope.SetTag("error_type", getErrorType(err))
+
 					scope.SetContext("request", map[string]any{
-						"url":     c.OriginalURL(),
-						"method":  c.Method(),
-						"headers": c.GetReqHeaders(),
-						"body":    string(c.Body()),
+						"url":        c.OriginalURL(),
+						"method":     c.Method(),
+						"headers":    c.GetReqHeaders(),
+						"user_agent": c.Get("User-Agent"),
+						"ip":         c.IP(),
+						"body_size":  len(c.Body()),
+						"query":      c.Queries(),
 					})
-					hub.CaptureException(err)
+
+					scope.SetContext("error_details", map[string]any{
+						"message":     err.Error(),
+						"type":        fmt.Sprintf("%T", err),
+						"stack_trace": string(debug.Stack()),
+					})
+
+					scope.SetFingerprint([]string{
+						"middleware-error",
+						fmt.Sprintf("%d", c.Response().StatusCode()),
+						getErrorFingerprint(err),
+					})
+
+					logFields := []any{
+						slog.String("url", c.OriginalURL()),
+						slog.String("method", c.Method()),
+						slog.Int("status_code", c.Response().StatusCode()),
+						slog.Any("error", err),
+						slog.String("stack_trace", string(debug.Stack())),
+					}
+
+					var internalErr *erri.Erri
+					if errors.As(err, &internalErr) {
+						scope.SetContext("internal_error", map[string]any{
+							"type":         string(internalErr.Type),
+							"message":      internalErr.Message,
+							"details":      internalErr.Details,
+							"property":     internalErr.Property,
+							"value":        internalErr.Value,
+							"file":         internalErr.File,
+							"system_error": internalErr.SystemError,
+						})
+
+						scope.SetTag("internal_error_type", string(internalErr.Type))
+						if internalErr.Property != "" {
+							scope.SetTag("error_property", internalErr.Property)
+						}
+					}
+
+					eventID := hub.CaptureException(err)
+
+					if eventID != nil {
+						logFields = append(logFields, slog.String("sentry_event_id", string(*eventID)))
+					}
+
+					handler.Log.ErrorContext(c.Context(), "Error captured in middleware", logFields...)
 				})
+			} else {
+				handler.Log.ErrorContext(c.Context(), "Error captured in middleware",
+					slog.String("url", c.OriginalURL()),
+					slog.String("method", c.Method()),
+					slog.Int("status_code", c.Response().StatusCode()),
+					slog.Any("error", err),
+					slog.String("stack_trace", string(debug.Stack())),
+				)
 			}
 		}
 

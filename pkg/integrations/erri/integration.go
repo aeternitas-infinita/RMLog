@@ -24,19 +24,21 @@ type requestInfo struct {
 }
 
 var ErriStruct = struct {
-	NOT_FOUND  ErriType
-	VALIDATION ErriType
-	DATABASE   ErriType
-	INTERNAL   ErriType
-	BUSY       ErriType
-	FORBIDDEN  ErriType
+	NOT_FOUND   ErriType
+	VALIDATION  ErriType
+	DATABASE    ErriType
+	INTERNAL    ErriType
+	BUSY        ErriType
+	FORBIDDEN   ErriType
+	WRONG_INPUT ErriType
 }{
-	NOT_FOUND:  "NOT_FOUND",
-	VALIDATION: "VALIDATION",
-	DATABASE:   "DATABASE",
-	INTERNAL:   "INTERNAL",
-	BUSY:       "BUSY",
-	FORBIDDEN:  "FORBIDDEN",
+	NOT_FOUND:   "NOT_FOUND",
+	VALIDATION:  "VALIDATION",
+	DATABASE:    "DATABASE",
+	INTERNAL:    "INTERNAL",
+	BUSY:        "BUSY",
+	FORBIDDEN:   "FORBIDDEN",
+	WRONG_INPUT: "WRONG_INPUT",
 }
 
 type Erri struct {
@@ -67,6 +69,9 @@ func (e *Erri) HTTPStatusCode() int {
 		return http.StatusForbidden
 	case ErriStruct.BUSY:
 		return http.StatusConflict
+	case ErriStruct.WRONG_INPUT:
+		return http.StatusBadRequest
+
 	default:
 		return http.StatusInternalServerError
 	}
@@ -80,7 +85,7 @@ func New() *ErriBuilder {
 	}
 }
 
-func HandlerErri(ctx context.Context, err error, c *fiber.Ctx) (int, *HttpResponse) {
+func Handle(ctx context.Context, err error, c *fiber.Ctx) (int, *HttpResponse) {
 	var internalErr *Erri
 	if errors.As(err, &internalErr) {
 		statusCode := internalErr.HTTPStatusCode()
@@ -120,7 +125,7 @@ func HandlerErri(ctx context.Context, err error, c *fiber.Ctx) (int, *HttpRespon
 	if c != nil {
 		requestInfo := extractRequestInfo(c)
 		handler.Log.ErrorContext(ctx, "handled error",
-			slog.Any("err", err),
+			core.ErrAttr(err),
 			slog.String("request_url", requestInfo.URL),
 			slog.String("request_method", requestInfo.Method),
 			slog.String("request_route", requestInfo.Route),
@@ -128,7 +133,7 @@ func HandlerErri(ctx context.Context, err error, c *fiber.Ctx) (int, *HttpRespon
 			slog.Any("request_query_params", requestInfo.QueryParams),
 		)
 	} else {
-		handler.Log.ErrorContext(ctx, "handled error", slog.Any("err", err))
+		handler.Log.ErrorContext(ctx, "handled error", core.ErrAttr(err))
 	}
 
 	return http.StatusInternalServerError, nil
@@ -149,4 +154,28 @@ type HttpResponse struct {
 
 func (mr *HttpResponse) Error() string {
 	return fmt.Sprintf("Message: %s", mr.Message)
+}
+
+func LogErri(ctx context.Context, internalErr *Erri, logger *slog.Logger, c *fiber.Ctx) {
+	var requestInfo requestInfo
+	if c != nil {
+		requestInfo = extractRequestInfo(c)
+	}
+
+	logger.ErrorContext(
+		ctx,
+		"Logged internal error",
+		slog.String("details", internalErr.Details),
+		slog.String("file", internalErr.File),
+		slog.String("message", internalErr.Message),
+		slog.Any("value", internalErr.Value),
+		slog.String("property", internalErr.Property),
+		slog.String("type", string(internalErr.Type)),
+		slog.Any("system_error", internalErr.SystemError),
+		slog.String("request_url", requestInfo.URL),
+		slog.String("request_method", requestInfo.Method),
+		slog.String("request_route", requestInfo.Route),
+		slog.Any("request_params", requestInfo.Params),
+		slog.Any("request_query_params", requestInfo.QueryParams),
+	)
 }
